@@ -1,6 +1,6 @@
 services:
   pgvector:
-    image: 'pgvector/pgvector:pg16'
+    image: 'pgvector/pgvector:0.8.0-pg17'
     environment:
       - 'POSTGRES_DB=study-buddy'
       - 'POSTGRES_PASSWORD=hyBUFsjUKoe8lIJQ'

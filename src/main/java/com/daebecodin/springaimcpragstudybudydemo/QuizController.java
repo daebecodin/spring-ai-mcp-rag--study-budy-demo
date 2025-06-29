@@ -24,9 +24,10 @@ public class QuizController {
 
 
     @GetMapping("/quiz")
-    public String quizMe(@RequestParam(defaultValue="Quiz me on how to create a spring web application") String query) {
+    public String quizMe(@RequestParam(defaultValue="Generate a 10 question quiz") String query) {
         return chatClient.prompt()
                 .user(query) // the user message is what the client inputs
+                .system("You are a study buddy/ tutor . Make a quiz on the material in the document; you can include other things outside the document but just need the quiz to be related to the course material.")
                 .call() // blocking call so the response is not streamed to a client
                 .content(); // only returning string content of response
     }
