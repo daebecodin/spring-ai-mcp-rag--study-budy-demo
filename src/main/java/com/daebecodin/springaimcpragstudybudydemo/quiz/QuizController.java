@@ -1,10 +1,10 @@
-package com.daebecodin.springaimcpragstudybudydemo;
+package com.daebecodin.springaimcpragstudybudydemo.quiz;
 
+import com.daebecodin.springaimcpragstudybudydemo.document.DocumentIngestion;
 import org.apache.tika.exception.TikaException;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.reader.pdf.ParagraphPdfDocumentReader;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -19,7 +19,6 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @RestController
 public class QuizController {

@@ -1,4 +1,4 @@
-package com.daebecodin.springaimcpragstudybudydemo;
+package com.daebecodin.springaimcpragstudybudydemo.data;
 
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;

@@ -1,4 +1,4 @@
-package com.daebecodin.springaimcpragstudybudydemo;
+package com.daebecodin.springaimcpragstudybudydemo.document;
 
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.beans.factory.annotation.Value;

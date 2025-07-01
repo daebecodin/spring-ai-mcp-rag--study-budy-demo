@@ -1,4 +1,4 @@
-package com.daebecodin.springaimcpragstudybudydemo;
+package com.daebecodin.springaimcpragstudybudydemo.document;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;

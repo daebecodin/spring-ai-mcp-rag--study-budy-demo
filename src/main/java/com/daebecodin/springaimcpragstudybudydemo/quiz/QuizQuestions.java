@@ -1,4 +1,4 @@
-package com.daebecodin.springaimcpragstudybudydemo;
+package com.daebecodin.springaimcpragstudybudydemo.quiz;
 
 import java.util.List;
 

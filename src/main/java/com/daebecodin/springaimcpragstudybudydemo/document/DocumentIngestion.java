@@ -182,7 +182,7 @@ public class DocumentIngestion {
     }
     
     @Transactional
-    public void saveProcessedDocument(String filename, Path documentPath, int chunkCount) {
+    protected void saveProcessedDocument(String filename, Path documentPath, int chunkCount) {
         try {
             long fileSize = Files.size(documentPath);
             ProcessedDocument processedDoc = new ProcessedDocument(filename, fileSize, chunkCount);
