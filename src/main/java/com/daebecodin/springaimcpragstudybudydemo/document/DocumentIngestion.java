@@ -1,4 +1,4 @@
-package com.daebecodin.springaimcpragstudybudydemo;
+package com.daebecodin.springaimcpragstudybudydemo.document;
 
 import jakarta.annotation.PostConstruct;
 import org.apache.tika.Tika;
@@ -128,12 +128,11 @@ public class DocumentIngestion {
                lowerFilename.endsWith(".xml");
     }
     
-    @Transactional
-    private void processDocument(Path documentPath) {
+    protected void processDocument(Path documentPath) {
+        String filename = documentPath.getFileName().toString();
+        logger.info("Processing document: {}", filename);
+        
         try {
-            String filename = documentPath.getFileName().toString();
-            logger.info("Processing document: {}", filename);
-            
             Resource resource = new UrlResource(documentPath.toUri());
             
             List<Document> documents;
@@ -157,17 +156,49 @@ public class DocumentIngestion {
             );
             
             // Add split documents to vector store
-            vectorStore.add(splitDocuments);
+            try {
+                vectorStore.add(splitDocuments);
+                logger.info("Successfully added {} chunks to vector store", splitDocuments.size());
+            } catch (Exception vectorStoreException) {
+                logger.error("Error adding documents to vector store for {}: {}", filename, vectorStoreException.getMessage(), vectorStoreException);
+                // Don't return here - still save to database to track the attempt
+            }
             
-            // Record that this document has been processed
-            long fileSize = Files.size(documentPath);
-            ProcessedDocument processedDoc = new ProcessedDocument(filename, fileSize, splitDocuments.size());
-            processedDocumentRepository.save(processedDoc);
+            // Record that this document has been processed (separate transaction)
+            saveProcessedDocument(filename, documentPath, splitDocuments.size());
             
             logger.info("Successfully processed {} with {} chunks", filename, splitDocuments.size());
             
         } catch (Exception e) {
-            logger.error("Error processing document {}: {}", documentPath.getFileName(), e.getMessage(), e);
+            logger.error("Error processing document {}: {}", filename, e.getMessage(), e);
+            // Still try to save to database to avoid reprocessing
+            try {
+                saveProcessedDocument(filename, documentPath, 0);
+                logger.info("Saved failed processing attempt for {} to avoid reprocessing", filename);
+            } catch (Exception saveException) {
+                logger.error("Failed to save processing record for {}: {}", filename, saveException.getMessage());
+            }
+        }
+    }
+    
+    @Transactional
+    public void saveProcessedDocument(String filename, Path documentPath, int chunkCount) {
+        try {
+            long fileSize = Files.size(documentPath);
+            ProcessedDocument processedDoc = new ProcessedDocument(filename, fileSize, chunkCount);
+            processedDocumentRepository.save(processedDoc);
+            logger.info("Saved processing record for {} with {} chunks", filename, chunkCount);
+        } catch (IOException e) {
+            logger.error("Error getting file size for {}: {}", filename, e.getMessage());
+
+            //save with size 0 if we cant get actual zise
+            var processedDocument = new ProcessedDocument(filename, 0L, chunkCount);
+            processedDocumentRepository.save(processedDocument);
+            logger.info("Saved processing record for {} with unknown file size", filename);
+        }
+        catch (Exception e) {
+            logger.error("Error saving processed document record for {}: {}", filename, e.getMessage(), e);
+            throw e; // Re-throw to ensure transaction rollback if needed
         }
     }
     
@@ -241,7 +272,6 @@ public class DocumentIngestion {
     /**
      * Method to manually trigger processing of a specific document
      */
-    @Transactional
     public void processNewDocument(String filename) throws IOException {
         Path documentPath = Paths.get(documentDirectory.getURI()).resolve(filename);
         if (Files.exists(documentPath) && !processedDocumentRepository.existsByFilename(filename)) {
