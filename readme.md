@@ -3,6 +3,139 @@
 ## Overview
 A Spring Boot application that implements Retrieval-Augmented Generation (RAG) for document-based question answering. The system processes documents, stores them in a vector database, and uses AI models to answer questions based on the ingested content.
 
+## System Architecture
+
+### Application Startup Flow
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           APPLICATION STARTUP                                   │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    DatabaseInitializer (@Order(1))                             │
+│                         (@PostConstruct)                                       │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        DocumentIngestion (@Order(2))                           │
+│                         (@PostConstruct)                                       │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    Scan /src/main/resources/docs/                              │
+│                    Find all matching files                                     │
+│                    (*.pdf, *.txt, *.docx, *.json, *.xml)                     │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    For each file found:                                        │
+│                    Check ProcessedDocumentRepository                           │
+│                    if (filename exists in database)                           │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                        ┌───────────────┴───────────────┐
+                        ▼                               ▼
+            ┌─────────────────────┐         ┌─────────────────────┐
+            │   Already Processed │         │    New Document     │
+            │   Skip Processing   │         │   Process Document  │
+            │   Log: "Skipping"   │         │                     │
+            └─────────────────────┘         └─────────────────────┘
+                        │                               │
+                        │                               ▼
+                        │               ┌─────────────────────────────────┐
+                        │               │        Process Document         │
+                        │               │  1. Read PDF/Text content       │
+                        │               │  2. Split into chunks           │
+                        │               │  3. Generate embeddings         │
+                        │               │  4. Store in Vector Store       │
+                        │               │  5. Save to ProcessedDocument   │
+                        │               └─────────────────────────────────┘
+                        │                               │
+                        └───────────────┬───────────────┘
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           Continue with next file                              │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        Application Ready                                       │
+│                   Vector Store contains:                                       │
+│                   • Previously processed documents                             │
+│                   • Newly processed documents                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Data Flow Diagram
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   File System   │    │   PostgreSQL    │    │  Vector Store   │
+│                 │    │                 │    │   (PgVector)    │
+│ /docs/*.pdf     │    │ processed_docs  │    │                 │
+│ /docs/*.txt     │    │ table           │    │ embeddings +    │
+│ /docs/*.docx    │    │                 │    │ metadata        │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                DocumentIngestion Service                        │
+│                                                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │  File Scanner   │  │  DB Checker     │  │  Vector Writer  │ │
+│  │                 │  │                 │  │                 │ │
+│  │ • List files    │  │ • Query DB      │  │ • Generate      │ │
+│  │ • Filter types  │  │ • Check exists  │  │   embeddings    │ │
+│  │ • Get metadata  │  │ • Track status  │  │ • Store chunks  │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Component Interaction Flow
+```
+REST API Endpoints
+┌─────────────────────────────────────────────────────────────────┐
+│ GET    /quiz                                                    │
+│ GET    /document                                                │
+│ POST   /upload                                                  │
+│ GET    /debug/search                                            │
+│ GET    /debug/context                                           │
+│ GET    /api/documents/processed                                 │
+│ POST   /api/documents/process/{filename}                        │
+│ DELETE /api/documents/{filename}                                │
+│ POST   /api/documents/rescan                                    │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         QuizController & DocumentManagementController           │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                DocumentIngestion Service                        │
+│                                                                 │
+│ • init() - Process new documents on startup                     │
+│ • processDocument() - Handle individual document processing     │
+│ • processNewDocument() - Manual document processing             │
+│ • removeDocument() - Remove from tracking                       │
+└─────────────────────────────────────────────────────────────────┘
+                    │                           │
+                    ▼                           ▼
+┌─────────────────────────────┐    ┌─────────────────────────────┐
+│  ProcessedDocumentRepository │    │       VectorStore           │
+│                             │    │                             │
+│ • findByFilename()          │    │ • add(documents)            │
+│ • existsByFilename()        │    │ • similaritySearch()        │
+│ • save()                    │    │                             │
+│ • deleteByFilename()        │    │                             │
+└─────────────────────────────┘    └─────────────────────────────┘
+```
+
 ## Tools & Technologies
 
 ### Development Tools
@@ -112,140 +245,6 @@ http DELETE localhost:8080/api/documents/old-document.pdf
 ```bash
 # Trigger rescan for new documents
 http POST localhost:8080/api/documents/rescan
-```
-
-## System Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           APPLICATION STARTUP                                   │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                    DatabaseInitializer (@Order(1))                             │
-│                         (@PostConstruct)                                       │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                        DocumentIngestion (@Order(2))                           │
-│                         (@PostConstruct)                                       │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                    Scan /src/main/resources/docs/                              │
-│                    Find all matching files                                     │
-│                    (*.pdf, *.txt, *.docx, *.json, *.xml)                     │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                    For each file found:                                        │
-│                    Check ProcessedDocumentRepository                           │
-│                    if (filename exists in database)                           │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                        ┌───────────────┴───────────────┐
-                        ▼                               ▼
-            ┌─────────────────────┐         ┌─────────────────────┐
-            │   Already Processed │         │    New Document     │
-            │   Skip Processing   │         │   Process Document  │
-            │   Log: "Skipping"   │         │                     │
-            └─────────────────────┘         └─────────────────────┘
-                        │                               │
-                        │                               ▼
-                        │               ┌─────────────────────────────────┐
-                        │               │        Process Document         │
-                        │               │  1. Read PDF/Text content       │
-                        │               │  2. Split into chunks           │
-                        │               │  3. Generate embeddings         │
-                        │               │  4. Store in Vector Store       │
-                        │               │  5. Save to ProcessedDocument   │
-                        │               └─────────────────────────────────┘
-                        │                               │
-                        └───────────────┬───────────────┘
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           Continue with next file                              │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                        Application Ready                                       │
-│                   Vector Store contains:                                       │
-│                   • Previously processed documents                             │
-│                   • Newly processed documents                                  │
-└─────────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Data Flow Diagram
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   File System   │    │   PostgreSQL    │    │  Vector Store   │
-│                 │    │                 │    │   (PgVector)    │
-│ /docs/*.pdf     │    │ processed_docs  │    │                 │
-│ /docs/*.txt     │    │ table           │    │ embeddings +    │
-│ /docs/*.docx    │    │                 │    │ metadata        │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                DocumentIngestion Service                        │
-│                                                                 │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
-│  │  File Scanner   │  │  DB Checker     │  │  Vector Writer  │ │
-│  │                 │  │                 │  │                 │ │
-│  │ • List files    │  │ • Query DB      │  │ • Generate      │ │
-│  │ • Filter types  │  │ • Check exists  │  │   embeddings    │ │
-│  │ • Get metadata  │  │ • Track status  │  │ • Store chunks  │ │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## Component Interaction Flow
-
-```
-REST API Endpoints
-┌─────────────────────────────────────────────────────────────────┐
-│ GET    /quiz                                                    │
-│ GET    /document                                                │
-│ POST   /upload                                                  │
-│ GET    /debug/search                                            │
-│ GET    /debug/context                                           │
-│ GET    /api/documents/processed                                 │
-│ POST   /api/documents/process/{filename}                        │
-│ DELETE /api/documents/{filename}                                │
-│ POST   /api/documents/rescan                                    │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│         QuizController & DocumentManagementController           │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                DocumentIngestion Service                        │
-│                                                                 │
-│ • init() - Process new documents on startup                     │
-│ • processDocument() - Handle individual document processing     │
-│ • processNewDocument() - Manual document processing             │
-│ • removeDocument() - Remove from tracking                       │
-└─────────────────────────────────────────────────────────────────┘
-                    │                           │
-                    ▼                           ▼
-┌─────────────────────────────┐    ┌─────────────────────────────┐
-│  ProcessedDocumentRepository │    │       VectorStore           │
-│                             │    │                             │
-│ • findByFilename()          │    │ • add(documents)            │
-│ • existsByFilename()        │    │ • similaritySearch()        │
-│ • save()                    │    │                             │
-│ • deleteByFilename()        │    │                             │
-└─────────────────────────────┘    └─────────────────────────────┘
 ```
 
 ## Document Processing
