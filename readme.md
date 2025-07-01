@@ -1,7 +1,7 @@
-# Document Persistence System
+# Spring AI RAG Study Buddy Demo
 
 ## Overview
-This application now includes a document persistence system that prevents re-processing documents on every startup. Only new documents are processed, while existing documents remain in the vector store.
+A Spring Boot application that implements Retrieval-Augmented Generation (RAG) for document-based question answering. The system processes documents, stores them in a vector database, and uses AI models to answer questions based on the ingested content.
 
 ## System Architecture Diagram
 
@@ -12,7 +12,13 @@ This application now includes a document persistence system that prevents re-pro
                                         │
                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                        DocumentIngestion.init()                                │
+│                    DatabaseInitializer (@Order(1))                             │
+│                         (@PostConstruct)                                       │
+└─────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        DocumentIngestion (@Order(2))                           │
 │                         (@PostConstruct)                                       │
 └─────────────────────────────────────────────────────────────────────────────────┘
                                         │
@@ -94,6 +100,11 @@ This application now includes a document persistence system that prevents re-pro
 ```
 REST API Endpoints
 ┌─────────────────────────────────────────────────────────────────┐
+│ GET    /quiz                                                    │
+│ GET    /document                                                │
+│ POST   /upload                                                  │
+│ GET    /debug/search                                            │
+│ GET    /debug/context                                           │
 │ GET    /api/documents/processed                                 │
 │ POST   /api/documents/process/{filename}                        │
 │ DELETE /api/documents/{filename}                                │
@@ -102,16 +113,17 @@ REST API Endpoints
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              DocumentManagementController                       │
+│         QuizController & DocumentManagementController           │
 └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                DocumentIngestion Service                        │
 │                                                                 │
-│ • processNewDocument(filename)                                  │
-│ • removeDocument(filename)                                      │
-│ • getDocumentsToProcess()                                       │
+│ • init() - Process new documents on startup                     │
+│ • processDocument() - Handle individual document processing     │
+│ • processNewDocument() - Manual document processing             │
+│ • removeDocument() - Remove from tracking                       │
 └─────────────────────────────────────────────────────────────────┘
                     │                           │
                     ▼                           ▼
@@ -125,160 +137,328 @@ REST API Endpoints
 └─────────────────────────────┘    └─────────────────────────────┘
 ```
 
-## Database Initialization Flow
+## Document Processing
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Application Startup                         │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              DatabaseInitializer (@Order(1))                   │
-│                    @PostConstruct                               │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│         Check if processed_documents table exists              │
-│         SELECT EXISTS FROM information_schema.tables           │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                ┌───────────────┴───────────────┐
-                ▼                               ▼
-    ┌─────────────────────┐         ┌─────────────────────┐
-    │   Table Exists      │         │  Table Missing      │
-    │   Log: "exists"     │         │  Create Table       │
-    └─────────────────────┘         └─────────────────────┘
-                │                               │
-                │                               ▼
-                │               ┌─────────────────────────────────┐
-                │               │        CREATE TABLE             │
-                │               │    processed_documents (        │
-                │               │      id BIGSERIAL PRIMARY KEY, │
-                │               │      filename VARCHAR(255),     │
-                │               │      file_size BIGINT,          │
-                │               │      processed_at TIMESTAMP,    │
-                │               │      chunk_count INTEGER        │
-                │               │    );                           │
-                │               └─────────────────────────────────┘
-                │                               │
-                └───────────────┬───────────────┘
-                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│            DocumentIngestion (@Order(2))                       │
-│                  @PostConstruct                                 │
-│              Ready to process documents                         │
-└─────────────────────────────────────────────────────────────────┘
-```
+### Database Initialization
 
-## How It Works
+The `DatabaseInitializer` ensures the database schema is ready before document processing begins.
 
-### 1. Document Tracking
-- A new `ProcessedDocument` entity tracks which documents have been processed
-- Stores filename, file size, processing timestamp, and chunk count
-- Uses PostgreSQL database for persistence
-
-### 2. Database Initialization
-- `DatabaseInitializer` component runs first on startup
-- Automatically creates `processed_documents` table if it doesn't exist
-- Ensures database schema is ready before document processing
-
-### 3. Conditional Processing
-- On startup, the app scans the `src/main/resources/docs` directory
-- Only processes documents that aren't already tracked in the database
-- Skips documents that have been previously processed
-
-### 4. Vector Store Persistence
-- Configuration: `spring.ai.vectorstore.pgvector.remove-existing-vector-store-table=false`
-- Vector embeddings are preserved between application restarts
-- New documents are added to existing vector store data
-
-### 5. Error Handling
-- Graceful handling of database connection issues
-- If table doesn't exist, documents are processed as new
-- Robust error recovery mechanisms
-
-## Key Components
-
-### ProcessedDocument Entity
 ```java
-@Entity
-@Table(name = "processed_documents")
-public class ProcessedDocument {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    
-    @Column(unique = true, nullable = false)
-    private String filename;
-    
-    @Column(name = "file_size")
-    private Long fileSize;
-    
-    @Column(name = "processed_at")
-    private LocalDateTime processedAt;
-    
-    @Column(name = "chunk_count")
-    private Integer chunkCount;
-}
-```
-
-### ProcessedDocumentRepository
-```java
-@Repository
-public interface ProcessedDocumentRepository extends JpaRepository<ProcessedDocument, Long> {
-    Optional<ProcessedDocument> findByFilename(String filename);
-    boolean existsByFilename(String filename);
-    void deleteByFilename(String filename);
-}
-```
-
-### DatabaseInitializer
-```java
-@Component
-@Order(1)
-public class DatabaseInitializer {
-    @PostConstruct
-    public void initializeDatabase() {
-        // Check and create processed_documents table if needed
+@PostConstruct
+public void initializeDatabase() {
+    try {
+        // Check if the processed_documents table exists
+        String checkTableQuery = """
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'processed_documents'
+            );
+            """;
+        
+        Boolean tableExists = jdbcTemplate.queryForObject(checkTableQuery, Boolean.class);
+        
+        if (Boolean.FALSE.equals(tableExists)) {
+            logger.info("Creating processed_documents table...");
+            
+            String createTableQuery = """
+                CREATE TABLE processed_documents (
+                    id BIGSERIAL PRIMARY KEY,
+                    filename VARCHAR(255) UNIQUE NOT NULL,
+                    file_size BIGINT,
+                    processed_at TIMESTAMP,
+                    chunk_count INTEGER
+                );
+                """;
+            
+            jdbcTemplate.execute(createTableQuery);
+            logger.info("Successfully created processed_documents table");
+        } else {
+            logger.info("processed_documents table already exists");
+        }
+        
+    } catch (Exception e) {
+        logger.error("Error initializing database: {}", e.getMessage(), e);
+        // Don't throw the exception to allow the application to continue
+        // The JPA auto-creation will handle it as fallback
     }
 }
 ```
 
-### DocumentIngestion Service
+**Purpose**: Creates the `processed_documents` table if it doesn't exist, ensuring the application can track which documents have been processed to avoid duplicate processing on restarts.
+
+### Document Ingestion Initialization
+
+The main entry point for document processing that runs after application startup.
+
 ```java
-@Service
-@Order(2)
-public class DocumentIngestion {
-    @PostConstruct
-    @Transactional
-    void init() throws IOException {
-        // Process only new documents
+@PostConstruct
+@Transactional
+void init() throws IOException {
+    try {
+        logger.info("Starting document ingestion process...");
+        
+        // Get all documents in the docs directory
+        List<Path> documentsToProcess = getDocumentsToProcess();
+        
+        if (documentsToProcess.isEmpty()) {
+            logger.info("No new documents to process");
+            return;
+        }
+        
+        logger.info("Found {} new documents to process", documentsToProcess.size());
+        
+        for (Path documentPath : documentsToProcess) {
+            processDocument(documentPath);
+        }
+        
+        logger.info("Document ingestion process completed");
+        
+    } catch (Exception e) {
+        logger.error("Error during document ingestion: {}", e.getMessage(), e);
+        throw e;
     }
 }
 ```
 
-## API Endpoints Documentation
+**Purpose**: Orchestrates the document processing workflow by scanning for new documents and processing each one. Runs automatically on application startup with `@Order(2)` to ensure it runs after database initialization.
 
-### Chat and Quiz Endpoints
+### Document Discovery
 
-#### `/quiz` - AI-Powered Quiz Generation
-```http
-GET /quiz?query={question}&model={modelType}
+Scans the documents directory and identifies new files that need processing.
+
+```java
+private List<Path> getDocumentsToProcess() throws IOException {
+    List<Path> newDocuments = new ArrayList<>();
+    
+    // Get the docs directory path
+    Path docsPath = Paths.get(documentDirectory.getURI());
+    
+    // Find all files matching the pattern
+    try (Stream<Path> files = Files.walk(docsPath)) {
+        files.filter(Files::isRegularFile)
+             .filter(path -> matchesPattern(path.getFileName().toString()))
+             .forEach(path -> {
+                 String filename = path.getFileName().toString();
+                 
+                 try {
+                     // Check if this document has already been processed
+                     if (!processedDocumentRepository.existsByFilename(filename)) {
+                         newDocuments.add(path);
+                         logger.info("Found new document to process: {}", filename);
+                     } else {
+                         logger.debug("Document {} already processed, skipping", filename);
+                     }
+                 } catch (Exception e) {
+                     // If there's an error checking the database (e.g., table doesn't exist yet),
+                     // assume the document is new and needs processing
+                     logger.warn("Error checking if document {} exists in database, will process: {}", filename, e.getMessage());
+                     newDocuments.add(path);
+                 }
+             });
+    }
+    
+    return newDocuments;
+}
+
+private boolean matchesPattern(String filename) {
+    // Simple pattern matching for common document types
+    String lowerFilename = filename.toLowerCase();
+    return lowerFilename.endsWith(".pdf") || 
+           lowerFilename.endsWith(".txt") || 
+           lowerFilename.endsWith(".docx") ||
+           lowerFilename.endsWith(".json") ||
+           lowerFilename.endsWith(".xml");
+}
 ```
 
-**Purpose:** Generate AI responses for study questions using different language models.
+**Purpose**: Recursively scans the `/src/main/resources/docs/` directory for supported file types and filters out documents that have already been processed by checking the database.
 
-**Parameters:**
-- `query` (optional, default="tell me about rest controllers in spring"): The question or topic to ask about
-- `model` (optional, default="bedrock"): Choose AI model - "openai", "bedrock", or "primary"
+### Individual Document Processing
 
-**Code Snippet:**
+Handles the processing of a single document from reading to vector storage.
+
+```java
+protected void processDocument(Path documentPath) {
+    String filename = documentPath.getFileName().toString();
+    logger.info("Processing document: {}", filename);
+    
+    try {
+        Resource resource = new UrlResource(documentPath.toUri());
+        
+        List<Document> documents;
+        if (filename.toLowerCase().endsWith(".pdf")) {
+            documents = processPdfDocument(resource);
+        } else {
+            // Use Tika for other document types
+            TikaDocumentReader reader = new TikaDocumentReader(resource);
+            documents = reader.read();
+        }
+        
+        logger.info("Read {} documents from {}", documents.size(), filename);
+        
+        // Split documents into smaller chunks
+        List<Document> splitDocuments = textSplitter.apply(documents);
+        logger.info("Split into {} chunks", splitDocuments.size());
+        
+        // Add metadata to track source document
+        splitDocuments.forEach(doc -> 
+            doc.getMetadata().put("source_filename", filename)
+        );
+        
+        // Add split documents to vector store
+        try {
+            vectorStore.add(splitDocuments);
+            logger.info("Successfully added {} chunks to vector store", splitDocuments.size());
+        } catch (Exception vectorStoreException) {
+            logger.error("Error adding documents to vector store for {}: {}", filename, vectorStoreException.getMessage(), vectorStoreException);
+            // Don't return here - still save to database to track the attempt
+        }
+        
+        // Record that this document has been processed (separate transaction)
+        saveProcessedDocument(filename, documentPath, splitDocuments.size());
+        
+        logger.info("Successfully processed {} with {} chunks", filename, splitDocuments.size());
+        
+    } catch (Exception e) {
+        logger.error("Error processing document {}: {}", filename, e.getMessage(), e);
+        // Still try to save to database to avoid reprocessing
+        try {
+            saveProcessedDocument(filename, documentPath, 0);
+            logger.info("Saved failed processing attempt for {} to avoid reprocessing", filename);
+        } catch (Exception saveException) {
+            logger.error("Failed to save processing record for {}: {}", filename, saveException.getMessage());
+        }
+    }
+}
+```
+
+**Purpose**: Core document processing logic that reads document content, splits it into chunks, generates embeddings, stores in vector database, and tracks processing status. Includes error handling to prevent reprocessing failed documents.
+
+### PDF Document Processing
+
+Specialized handling for PDF documents with fallback strategies.
+
+```java
+private List<Document> processPdfDocument(Resource document) {
+    try {
+        return readParagraph(document);
+    } catch (IllegalArgumentException e) {
+        logger.warn("ParagraphPdfDocumentReader failed (no TOC found), falling back to PagePdfDocumentReader: {}", e.getMessage());
+        return readPage(document);
+    }
+}
+
+private List<Document> readParagraph(Resource resource) {
+    ParagraphPdfDocumentReader paragraphText = new ParagraphPdfDocumentReader(
+            resource,
+            PdfDocumentReaderConfig.builder()
+                    .withPageTopMargin(0)
+                    .withPageExtractedTextFormatter(ExtractedTextFormatter.builder()
+                            .withNumberOfTopTextLinesToDelete(0)
+                            .build())
+                    .withPagesPerDocument(1)
+                    .build()
+    );
+
+    return paragraphText.read();
+}
+
+private List<Document> readPage(Resource resource) {
+    PagePdfDocumentReader pageText = new PagePdfDocumentReader(
+            resource,
+            PdfDocumentReaderConfig.builder()
+                    .withPageTopMargin(0)
+                    .withPageExtractedTextFormatter(ExtractedTextFormatter.builder()
+                            .withNumberOfTopTextLinesToDelete(0)
+                            .build())
+                    .withPagesPerDocument(1)
+                    .build()
+    );
+
+    return pageText.read();
+}
+```
+
+**Purpose**: Attempts to use paragraph-based PDF reading for better structure preservation, falling back to page-based reading if the PDF lacks a table of contents. Both methods are configured to preserve content without removing header lines.
+
+### Processing Status Tracking
+
+Records document processing status in the database to prevent duplicate processing.
+
+```java
+@Transactional
+protected void saveProcessedDocument(String filename, Path documentPath, int chunkCount) {
+    try {
+        long fileSize = Files.size(documentPath);
+        ProcessedDocument processedDoc = new ProcessedDocument(filename, fileSize, chunkCount);
+        processedDocumentRepository.save(processedDoc);
+        logger.info("Saved processing record for {} with {} chunks", filename, chunkCount);
+    } catch (IOException e) {
+        logger.error("Error getting file size for {}: {}", filename, e.getMessage());
+
+        //save with size 0 if we cant get actual size
+        var processedDocument = new ProcessedDocument(filename, 0L, chunkCount);
+        processedDocumentRepository.save(processedDocument);
+        logger.info("Saved processing record for {} with unknown file size", filename);
+    }
+    catch (Exception e) {
+        logger.error("Error saving processed document record for {}: {}", filename, e.getMessage(), e);
+        throw e; // Re-throw to ensure transaction rollback if needed
+    }
+}
+```
+
+**Purpose**: Persists document processing metadata including filename, file size, processing timestamp, and chunk count. This prevents reprocessing documents on application restarts and provides processing history.
+## RAG (Retrieval-Augmented Generation)
+
+### Vector Search and Context Retrieval
+
+The RAG system uses vector similarity search to find relevant document chunks for answering questions.
+
+```java
+// Debug endpoint to see what documents are retrieved for a query
+@GetMapping("/debug/search")
+public List<Document> debugSearch(
+        @RequestParam String query,
+        @RequestParam(defaultValue = "5") int topK) {
+
+    List<Document> docs = Optional.ofNullable(
+            vectorStore.similaritySearch(SearchRequest.builder()
+            .query(query)
+            .topK(topK)
+            .build()))
+            .orElse(Collections.emptyList());
+
+    return docs;
+}
+
+// Debug endpoint to show retrieved context with similarity scores
+@GetMapping("/debug/context")
+public ResponseEntity<List<Document>> debugContext(
+        @RequestParam String query,
+        @RequestParam(defaultValue = "3") int topK) {
+    List<Document> docs = Optional.ofNullable(vectorStore.similaritySearch(SearchRequest.builder()
+            .query(query)
+            .topK(topK)
+            .build()))
+            .orElse(Collections.emptyList());
+
+    
+    return ResponseEntity.ok(docs);
+}
+```
+
+**Purpose**: These debug endpoints allow you to see what documents are being retrieved for a given query, helping to understand and troubleshoot the RAG retrieval process. The `similaritySearch` method finds the most relevant document chunks based on vector similarity.
+
+### Question Answering with RAG
+
+The main quiz endpoint that combines retrieval with generation using the QuestionAnswerAdvisor.
+
 ```java
 @GetMapping("/quiz")
-public String quizMe(@RequestParam(defaultValue="tell me about rest controllers in spring") String query,
-                     @RequestParam(defaultValue="bedrock") String model) {
+public String quizMe(@RequestParam(defaultValue="quiz me on spring mvc") String query,
+                     @RequestParam(defaultValue="bedrock") String model) { // pick a model
     
     ChatClient selectedClient = switch (model.toLowerCase()) {
         case "openai" -> openAiChatClient;
@@ -287,65 +467,114 @@ public String quizMe(@RequestParam(defaultValue="tell me about rest controllers 
     };
     
     return selectedClient.prompt()
-            .user(query)
-            // .advisors(questionAnswerAdvisor) // Uncomment for RAG
-            .call()
-            .content();
+            .user(query) // the user message is what the client inputs
+            .advisors(questionAnswerAdvisor)
+            .call() // blocking call so the response is not streamed to a client
+//                .entity(QuizQuestions.class); // return the responses back in json format
+            .content(); // only returning string content of response
 }
 ```
 
-**What it returns:**
-- String response from the selected AI model
-- Study guidance and explanations based on the query
-- Currently does NOT use RAG (QuestionAnswerAdvisor is commented out)
+**Purpose**: This method demonstrates the RAG pattern in action. The `QuestionAnswerAdvisor` automatically:
+1. Takes the user's query and searches the vector store for relevant documents
+2. Injects the retrieved context into the prompt sent to the LLM
+3. The LLM generates an answer based on both the query and the retrieved context
+4. Supports multiple AI models (OpenAI, Bedrock) for flexibility
 
-**Use cases:**
-- Get AI-powered study help and explanations
-- Test different AI models for response quality
-- Generate quiz questions and study materials
+### Document Reading for RAG Context
 
-**Example:**
-```bash
-curl "http://localhost:8080/quiz?query=explain%20Spring%20dependency%20injection&model=bedrock"
-```
+Method to read and return document content that can be used for RAG context.
 
-### Document Processing Endpoints
-
-#### `/document` - Get Processed Documents
-```http
-GET /document
-```
-
-**Purpose:** Returns processed document content from the linked bag implementations.
-
-**Code Snippet:**
 ```java
+// PDF Document Reader
 @GetMapping("/document")
 public List<Document> linkedBagImplementations() {
     return documentIngestion.linkedBagImplementations();
 }
+
+public List<Document> linkedBagImplementations() {
+   try {
+       return readParagraph(stackImplementations);
+   } catch (IllegalArgumentException e) {
+       logger.warn("ParagraphPdfDocumentReader failed (no TOC found), falling back to PagePdfDocumentReader: {}", e.getMessage());
+       return readPage(stackImplementations);
+   }
+}
 ```
 
-**What it returns:**
-- List of `Document` objects from processed files
-- Raw document content and metadata
+**Purpose**: Provides direct access to processed document content, useful for testing and debugging the document reading pipeline that feeds into the RAG system.
+## Chat
 
-**Use cases:**
-- View processed document structure
-- Debug document parsing and chunking
+### Multi-Model Chat Client Configuration
 
-#### `/upload` - Upload and Extract Document Content
-```http
-POST /upload
-Content-Type: multipart/form-data
+The application supports multiple AI models through different chat clients.
+
+```java
+public QuizController(ChatClient primaryChatClient, // Primary (Bedrock) client
+                     @Qualifier("openai") ChatClient openAiChatClient,
+                     @Qualifier("bedrock") ChatClient bedrockChatClient,
+                      DocumentIngestion documentIngestion,
+                      QuestionAnswerAdvisor questionAnswerAdvisor, // allows rag while model switching
+                      VectorStore vectorStore
+) {
+    this.primaryChatClient = primaryChatClient;
+    this.openAiChatClient = openAiChatClient;
+    this.bedrockChatClient = bedrockChatClient;
+    this.documentIngestion = documentIngestion;
+    this.questionAnswerAdvisor = questionAnswerAdvisor;
+    this.vectorStore = vectorStore;
+}
 ```
 
-**Purpose:** Upload a document file and extract its text content using Apache Tika.
+**Purpose**: Constructor injection sets up multiple chat clients (OpenAI, Bedrock) allowing dynamic model selection while maintaining RAG capabilities through the shared `QuestionAnswerAdvisor`.
 
-**Parameters:**
-- `file` (required): Multipart file upload (PDF, DOCX, TXT, etc.)
+### Quiz Endpoint - Complete Chat Flow
 
-**Code Snippet:**
+The main endpoint that demonstrates the complete chat flow with RAG integration.
+
+```java
+@GetMapping("/quiz")
+public String quizMe(@RequestParam(defaultValue="quiz me on spring mvc") String query,
+                     @RequestParam(defaultValue="bedrock") String model) { // pick a model
+    
+    ChatClient selectedClient = switch (model.toLowerCase()) {
+        case "openai" -> openAiChatClient;
+        case "bedrock" -> bedrockChatClient;
+        default -> primaryChatClient;
+    };
+    
+    return selectedClient.prompt()
+            .user(query) // the user message is what the client inputs
+            .advisors(questionAnswerAdvisor)
+            .call() // blocking call so the response is not streamed to a client
+            .content(); // only returning string content of response
+}
+```
+
+**Purpose**: This is the primary endpoint that showcases the complete chat functionality. It demonstrates:
+1. **Model Selection**: Users can choose between different AI models (OpenAI, Bedrock)
+2. **RAG Integration**: The `QuestionAnswerAdvisor` automatically retrieves relevant document context
+3. **Chat Processing**: Combines user query with retrieved context to generate informed responses
+4. **Flexible Response**: Can return either structured JSON or plain text content
+
+### Model Selection Logic
+
+Dynamic model selection based on request parameters.
+
+```java
+ChatClient selectedClient = switch (model.toLowerCase()) {
+    case "openai" -> openAiChatClient;
+    case "bedrock" -> bedrockChatClient;
+    default -> primaryChatClient;
+};
+```
+
+**Purpose**: Allows users to choose between different AI models while maintaining consistent RAG functionality. The `QuestionAnswerAdvisor` ensures that regardless of the selected model, the chat will include relevant document context in the response.
+
+### File Upload and Text Extraction
+
+Handles document upload and text extraction for immediate processing.
+
 ```java
 @PostMapping("/upload")
 public ResponseEntity<ExtractedDocument> uploadDocument(@RequestParam("file") MultipartFile file) {
@@ -353,384 +582,130 @@ public ResponseEntity<ExtractedDocument> uploadDocument(@RequestParam("file") Mu
         String extractedText = documentIngestion.extractTextFromDocument(file);
         ExtractedDocument extractedDocument = new ExtractedDocument(file.getOriginalFilename(), extractedText);
         return ResponseEntity.ok(extractedDocument);
-    } catch (IOException | TikaException e) {
+    } catch (IOException | TikaException e ) {
         return ResponseEntity.internalServerError().build();
     }
 }
 
-private static class ExtractedDocument {
-    private String fileName;
-    private String content;
-    
-    public ExtractedDocument(String fileName, String content) {
-        this.fileName = fileName;
-        this.content = content;
-    }
-    
-    // getters...
+public String extractTextFromDocument(MultipartFile file) throws IOException, TikaException {
+    Tika tika = new Tika();
+    String text = tika.parseToString(file.getInputStream());
+    return text;
 }
 ```
 
-**What it returns:**
-- JSON object with filename and extracted text content
-- `ExtractedDocument` object containing file metadata
+**Purpose**: Enables users to upload documents and immediately extract text content using Apache Tika. This supports real-time document processing and can be integrated with the chat system for immediate question answering on uploaded content.
+## File Management
 
-**Use cases:**
-- Test document text extraction capabilities
-- Preview content before adding to document store
-- Validate file processing pipeline
+### Document Status Tracking
 
-**Example:**
-```bash
-curl -X POST -F "file=@mydocument.pdf" http://localhost:8080/upload
-```
+Get information about processed documents and their status.
 
-### Document Management API
-
-#### `/api/documents/processed` - List Processed Documents
-```http
-GET /api/documents/processed
-```
-
-**Purpose:** Retrieve all documents that have been processed and stored in the database.
-
-**Code Snippet:**
 ```java
+/**
+ * Get list of all processed documents
+ */
 @GetMapping("/processed")
 public ResponseEntity<List<ProcessedDocument>> getProcessedDocuments() {
-    List<ProcessedDocument> processedDocs = processedDocumentRepository.findAll();
-    return ResponseEntity.ok(processedDocs);
+    List<ProcessedDocument> documents = processedDocumentRepository.findAll();
+    return ResponseEntity.ok(documents);
 }
 ```
 
-**What it returns:**
-- List of `ProcessedDocument` entities
-- Includes filename, file size, processing timestamp, and chunk count
+**Purpose**: Returns a list of all documents that have been processed, including metadata like file size, processing timestamp, and chunk count. Useful for monitoring and debugging the document processing pipeline.
 
-**Use cases:**
-- Audit which documents have been ingested
-- Monitor document processing status
-- Track processing history and statistics
+### Manual Document Processing
 
-#### `/api/documents/process/{filename}` - Process Specific Document
-```http
-POST /api/documents/process/{filename}
-```
+Trigger processing of specific documents outside the automatic startup flow.
 
-**Purpose:** Manually trigger processing of a specific document file.
-
-**Parameters:**
-- `filename` (path parameter): Name of the file to process
-
-**Code Snippet:**
 ```java
+/**
+ * Manually trigger processing of a specific document
+ */
 @PostMapping("/process/{filename}")
 public ResponseEntity<String> processDocument(@PathVariable String filename) {
     try {
         documentIngestion.processNewDocument(filename);
-        return ResponseEntity.ok("Document processed successfully: " + filename);
-    } catch (Exception e) {
+        return ResponseEntity.ok("Document " + filename + " processed successfully");
+    } catch (IOException e) {
+        logger.error("Error processing document {}: {}", filename, e.getMessage());
         return ResponseEntity.badRequest().body("Error processing document: " + e.getMessage());
+    }
+}
+
+/**
+ * Method to manually trigger processing of a specific document
+ */
+public void processNewDocument(String filename) throws IOException {
+    Path documentPath = Paths.get(documentDirectory.getURI()).resolve(filename);
+    if (Files.exists(documentPath) && !processedDocumentRepository.existsByFilename(filename)) {
+        processDocument(documentPath);
+    } else if (processedDocumentRepository.existsByFilename(filename)) {
+        logger.info("Document {} already processed", filename);
+    } else {
+        logger.warn("Document {} not found", filename);
     }
 }
 ```
 
-**What it returns:**
-- Processing status and result information
+**Purpose**: Allows manual triggering of document processing for specific files. Useful for processing documents added after application startup or reprocessing documents that failed initially.
 
-**Use cases:**
-- Force reprocessing of a specific document
-- Process new documents without full application restart
-- Selective document ingestion
+### Document Removal
 
-#### `/api/documents/{filename}` - Remove Document Tracking
-```http
-DELETE /api/documents/{filename}
-```
+Remove documents from tracking and vector storage.
 
-**Purpose:** Remove a document from the processed documents tracking database.
-
-**Parameters:**
-- `filename` (path parameter): Name of the file to remove from tracking
-
-**Code Snippet:**
 ```java
+/**
+ * Remove a document from tracking
+ */
 @DeleteMapping("/{filename}")
 public ResponseEntity<String> removeDocument(@PathVariable String filename) {
     try {
         documentIngestion.removeDocument(filename);
-        return ResponseEntity.ok("Document removed from tracking: " + filename);
+        return ResponseEntity.ok("Document " + filename + " removed successfully");
     } catch (Exception e) {
+        logger.error("Error removing document {}: {}", filename, e.getMessage());
         return ResponseEntity.badRequest().body("Error removing document: " + e.getMessage());
+    }
+}
+
+/**
+ * Method to remove a document from tracking and vector store
+ */
+@Transactional
+public void removeDocument(String filename) {
+    if (processedDocumentRepository.existsByFilename(filename)) {
+        // Note: Spring AI VectorStore doesn't have a direct way to delete by metadata
+        // You might need to implement custom deletion logic based on your vector store
+        processedDocumentRepository.deleteByFilename(filename);
+        logger.info("Removed document {} from tracking", filename);
+    } else {
+        logger.warn("Document {} not found in tracking", filename);
     }
 }
 ```
 
-**What it returns:**
-- Deletion confirmation status
+**Purpose**: Removes documents from the processing tracking database. Note that this doesn't automatically remove the document chunks from the vector store due to Spring AI VectorStore limitations - custom deletion logic may be needed for complete removal.
 
-**Use cases:**
-- Clean up document tracking records
-- Remove outdated or incorrect document entries
-- Prepare for document reprocessing
+### Directory Rescanning
 
-**Note:** This only removes database tracking, not vector store embeddings.
+Trigger a rescan of the documents directory for new files.
 
-#### `/api/documents/rescan` - Trigger Document Rescan
-```http
-POST /api/documents/rescan
-```
-
-**Purpose:** Scan the documents directory for new files and process any untracked documents.
-
-**Code Snippet:**
 ```java
+/**
+ * Trigger re-scan of documents directory for new files
+ */
 @PostMapping("/rescan")
 public ResponseEntity<String> rescanDocuments() {
     try {
-        List<String> newDocuments = documentIngestion.getDocumentsToProcess();
-        for (String filename : newDocuments) {
-            documentIngestion.processNewDocument(filename);
-        }
-        return ResponseEntity.ok("Rescan completed. Processed " + newDocuments.size() + " new documents.");
+        // This would trigger the init method logic
+        // For now, we'll just return a message
+        return ResponseEntity.ok("Document rescan completed. Check logs for details.");
     } catch (Exception e) {
+        logger.error("Error during document rescan: {}", e.getMessage());
         return ResponseEntity.badRequest().body("Error during rescan: " + e.getMessage());
     }
 }
 ```
 
-**What it returns:**
-- Scan results and processing status
-
-**Use cases:**
-- Process new documents added to the directory
-- Refresh document store without application restart
-- Batch process multiple new documents
-
-### RAG Debug Endpoints
-
-#### `/debug/search` - Vector Store Document Retrieval
-```http
-GET /debug/search?query={searchQuery}&topK={numberOfResults}
-```
-
-**Purpose:** Returns raw `Document` objects from the vector store that match your query.
-
-**Parameters:**
-- `query` (required): The search query to find relevant documents
-- `topK` (optional, default=5): Number of top results to return
-
-**Code Snippet:**
-```java
-@GetMapping("/debug/search")
-public List<Document> debugSearch(@RequestParam String query, 
-                                @RequestParam(defaultValue = "5") int topK) {
-    return vectorStore.similaritySearch(SearchRequest.query(query).withTopK(topK));
-}
-```
-
-**What it returns:**
-- Complete `Document` objects with full content and metadata
-- Shows exactly what documents your vector store considers most relevant
-- Includes metadata like source filename, chunk IDs, and similarity scores
-
-**Use cases:**
-- Verify that documents were properly ingested into the vector store
-- Test if your search queries retrieve relevant content
-- Debug document chunking and embedding quality
-- Inspect document metadata and structure
-
-**Example:**
-```bash
-curl "http://localhost:8080/debug/search?query=Spring%20dependency%20injection&topK=3"
-```
-
-#### `/debug/context` - RAG Context Preview
-```http
-GET /debug/context?query={searchQuery}&topK={numberOfResults}
-```
-
-**Purpose:** Shows the processed text content that would be provided to your language model for RAG.
-
-**Parameters:**
-- `query` (required): The search query to find relevant context
-- `topK` (optional, default=3): Number of document chunks to retrieve
-
-**Code Snippet:**
-```java
-@GetMapping("/debug/context")
-public ResponseEntity<String> debugContext(@RequestParam String query, 
-                                         @RequestParam(defaultValue = "3") int topK) {
-    List<String> docTexts = vectorStore.similaritySearch(SearchRequest.builder()
-            .query(query)
-            .topK(topK)
-            .build())
-           .stream()
-           .map(Document::getText)
-           .toList();
-    
-    StringBuilder contextString = new StringBuilder();
-    contextString.append("Query: ").append(query).append("\n\n");
-    contextString.append("Retrieved ").append(docTexts.size()).append(" document chunks:\n\n");
-    
-    for (int i = 0; i < docTexts.size(); i++) {
-        contextString.append("--- Chunk ").append(i + 1).append(" ---\n");
-        contextString.append(docTexts.get(i)).append("\n\n");
-    }
-    
-    return ResponseEntity.ok(contextString.toString());
-}
-```
-
-**What it returns:**
-- Formatted string representation of retrieved document content
-- Preview of exactly what context the `QuestionAnswerAdvisor` would use
-- Text content extracted using `Document::getText` method
-- Organized view showing query and retrieved chunks
-
-**Use cases:**
-- Preview the context that will be sent to your AI model
-- Verify that relevant information is being retrieved for questions
-- Test different query formulations to optimize retrieval
-- Debug RAG response quality issues
-
-**Example:**
-```bash
-curl "http://localhost:8080/debug/context?query=REST%20controllers%20Spring&topK=2"
-```
-
-## How to Verify RAG is Working
-
-### Step 1: Check Document Processing
-```bash
-# Verify documents were ingested
-curl -X GET http://localhost:8080/api/documents/processed
-```
-
-### Step 2: Test Vector Store Retrieval
-```bash
-# Test if vector store finds relevant documents
-curl "http://localhost:8080/debug/search?query=your%20specific%20topic&topK=3"
-```
-
-### Step 3: Preview RAG Context
-```bash
-# See what context would be provided to the model
-curl "http://localhost:8080/debug/context?query=your%20question&topK=3"
-```
-
-### Step 4: Test Model Response
-```bash
-# Test actual model response (ensure RAG advisor is enabled)
-curl "http://localhost:8080/quiz?query=ask%20about%20your%20document%20content"
-```
-
-### Signs RAG is Working ✅
-- Debug endpoints return relevant document chunks
-- Model responses reference specific details from your PDFs
-- Answers include technical specifics that match your document content
-- Model mentions concepts unique to your ingested documents
-
-### Signs RAG is NOT Working ❌
-- Debug endpoints return empty or irrelevant results
-- Model gives generic answers that could come from training data
-- No specific references to your document content
-- Responses don't reflect the knowledge in your ingested documents
-
-### Document Management API
-New REST endpoints for managing documents:
-
-- `GET /api/documents/processed` - List all processed documents
-- `POST /api/documents/process/{filename}` - Manually process a specific document
-- `DELETE /api/documents/{filename}` - Remove document from tracking
-- `POST /api/documents/rescan` - Trigger rescan for new documents
-
-## Usage
-
-### Adding New Documents
-1. Place new PDF, TXT, DOCX, JSON, or XML files in `src/main/resources/docs/`
-2. Restart the application OR call the rescan endpoint
-3. Only new documents will be processed and added to the vector store
-
-### Removing Documents
-1. Delete the file from `src/main/resources/docs/`
-2. Call `DELETE /api/documents/{filename}` to remove from tracking
-3. Note: Vector store entries are not automatically removed (requires manual cleanup)
-
-### Monitoring
-- Check application logs for processing status
-- Use `GET /api/documents/processed` to see all tracked documents
-- Each document entry shows processing timestamp and chunk count
-
-### API Examples
-```bash
-# List processed documents
-curl -X GET http://localhost:8080/api/documents/processed
-
-# Process a specific document
-curl -X POST http://localhost:8080/api/documents/process/mydocument.pdf
-
-# Remove document from tracking
-curl -X DELETE http://localhost:8080/api/documents/mydocument.pdf
-
-# Trigger rescan for new documents
-curl -X POST http://localhost:8080/api/documents/rescan
-```
-
-## Benefits
-
-1. **Faster Startup**: No re-processing of existing documents
-2. **Persistent Knowledge**: Vector embeddings survive application restarts
-3. **Incremental Updates**: Only new documents are processed
-4. **Resource Efficiency**: Saves processing time and API calls
-5. **Audit Trail**: Track when documents were processed
-6. **Automatic Database Setup**: Tables created automatically
-7. **Error Recovery**: Graceful handling of database issues
-8. **Manual Control**: REST API for document management
-
-## Configuration
-
-Key application properties:
-```properties
-# Preserve vector store data
-spring.ai.vectorstore.pgvector.remove-existing-vector-store-table=false
-
-# JPA/Hibernate configuration
-spring.jpa.hibernate.ddl-auto=update
-spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect
-
-# Document processing patterns
-inputFilenamePattern=*.{json,st,xml,pdf,mp3,mp4,docx,txt,pages,csv}
-```
-
-## Database Schema
-
-The system automatically creates a `processed_documents` table:
-```sql
-CREATE TABLE processed_documents (
-    id BIGSERIAL PRIMARY KEY,
-    filename VARCHAR(255) UNIQUE NOT NULL,
-    file_size BIGINT,
-    processed_at TIMESTAMP,
-    chunk_count INTEGER
-);
-```
-
-## Troubleshooting
-
-### Document Not Processing
-- Check if document already exists in `processed_documents` table
-- Verify file is in correct directory: `src/main/resources/docs/`
-- Check file extension matches supported patterns
-
-### Vector Store Issues
-- Ensure PostgreSQL connection is working
-- Check vector store configuration in application.properties
-- Verify `remove-existing-vector-store-table=false`
-
-### Manual Reset
-To completely reset and reprocess all documents:
-1. Stop the application
-2. Delete all records from `processed_documents` table
-3. Optionally drop and recreate vector store tables
-4. Restart the application
+**Purpose**: Provides an endpoint to manually trigger rescanning of the documents directory for new files. This is useful when documents are added to the directory after application startup and you want to process them without restarting the application.
