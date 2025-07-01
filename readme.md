@@ -3,6 +3,117 @@
 ## Overview
 A Spring Boot application that implements Retrieval-Augmented Generation (RAG) for document-based question answering. The system processes documents, stores them in a vector database, and uses AI models to answer questions based on the ingested content.
 
+## Tools & Technologies
+
+### Development Tools
+- **HTTPie** - Command-line HTTP client for API testing
+- **Docker Compose** - Container orchestration for PostgreSQL and pgVector
+- **Gradle** - Build automation and dependency management
+- **Spring Boot** - Application framework
+- **PostgreSQL with pgVector** - Vector database for embeddings storage
+
+### AI & ML Libraries
+- **Spring AI** - Spring's AI integration framework
+- **Apache Tika** - Document text extraction
+- **OpenAI API** - GPT models for chat completion
+- **AWS Bedrock** - Amazon's managed AI service
+
+### Installation Commands
+```bash
+# Install HTTPie (macOS)
+brew install httpie
+
+# Install HTTPie (Ubuntu/Debian)
+sudo apt install httpie
+
+# Install HTTPie (pip)
+pip install httpie
+
+# Start the application with Docker Compose
+docker-compose up -d
+./gradlew bootRun
+```
+
+## API Endpoints with HTTPie Examples
+
+### Chat & RAG Endpoints
+
+**Quiz Endpoint (Main RAG Chat)**
+```bash
+# Basic quiz with default model (Bedrock)
+http GET localhost:8080/quiz query=="What is Spring MVC?"
+
+# Quiz with specific model
+http GET localhost:8080/quiz query=="Explain dependency injection" model==openai
+
+# Quiz with complex query
+http GET localhost:8080/quiz query=="How does Spring Boot auto-configuration work?" model==bedrock
+```
+
+**Document Reading**
+```bash
+# Get processed document content
+http GET localhost:8080/document
+```
+
+**File Upload**
+```bash
+# Upload a document for text extraction
+http --form POST localhost:8080/upload file@/path/to/document.pdf
+```
+
+### Debug Endpoints
+
+**Vector Search Debug**
+```bash
+# Search vector store for relevant documents
+http GET localhost:8080/debug/search query=="Spring MVC" topK==5
+
+# Search with fewer results
+http GET localhost:8080/debug/search query=="dependency injection" topK==3
+```
+
+**Context Debug**
+```bash
+# See retrieved context for RAG
+http GET localhost:8080/debug/context query=="Spring Boot" topK==3
+
+# Debug context with more results
+http GET localhost:8080/debug/context query=="configuration" topK==5
+```
+
+### Document Management Endpoints
+
+**List Processed Documents**
+```bash
+# Get all processed documents
+http GET localhost:8080/api/documents/processed
+```
+
+**Manual Document Processing**
+```bash
+# Process a specific document
+http POST localhost:8080/api/documents/process/spring-guide.pdf
+
+# Process another document
+http POST localhost:8080/api/documents/process/tutorial.docx
+```
+
+**Document Removal**
+```bash
+# Remove document from tracking
+http DELETE localhost:8080/api/documents/spring-guide.pdf
+
+# Remove another document
+http DELETE localhost:8080/api/documents/old-document.pdf
+```
+
+**Directory Rescan**
+```bash
+# Trigger rescan for new documents
+http POST localhost:8080/api/documents/rescan
+```
+
 ## System Architecture Diagram
 
 ```
