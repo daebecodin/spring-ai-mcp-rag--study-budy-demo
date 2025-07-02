@@ -49,7 +49,7 @@ public class QuizController {
 
     @GetMapping("/quiz")
     public String quizMe(@RequestParam(defaultValue="quiz me on spring mvc") String query,
-                         @RequestParam(defaultValue="bedrock") String model) { // pick a model
+                         @RequestParam(defaultValue="openai") String model) { // pick a model
         
         ChatClient selectedClient = switch (model.toLowerCase()) {
             case "openai" -> openAiChatClient;

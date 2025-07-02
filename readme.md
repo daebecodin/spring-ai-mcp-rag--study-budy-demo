@@ -151,7 +151,75 @@ REST API Endpoints
 - **OpenAI API** - GPT models for chat completion
 - **AWS Bedrock** - Amazon's managed AI service
 
+## Docker & Database Setup
+
+### PostgreSQL with pgVector Extension
+
+The application uses PostgreSQL with the pgVector extension for vector similarity search. The database runs in a Docker container for easy setup and management.
+
+#### Docker Compose Configuration
+
+```yaml
+services:
+  pgvector:
+    image: 'pgvector/pgvector:0.8.0-pg17'
+    environment:
+      - 'POSTGRES_DB=study-buddy'
+      - 'POSTGRES_PASSWORD=secret'
+      - 'POSTGRES_USER=daebecodin'
+    labels:
+      - "org.springframework.boot.service-connection=postgres"
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/vector_extension.sql:/docker-entrypoint-initdb.d/0-vector_extension.sql
+
+volumes:
+  postgres_data:
+```
+
+#### Database Initialization Script
+
+The `postgres/vector_extension.sql` file automatically sets up the vector extension:
+
+```sql
+-- Enable the vector extension for pgvector
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Grant necessary permissions
+GRANT ALL PRIVILEGES ON DATABASE "study-buddy" TO daebecodin;
+```
+
+#### Vector Store Configuration
+
+The application is configured to use pgVector with the following settings:
+
+```properties
+# PostgreSQL datasource - Docker Container
+spring.datasource.url=jdbc:postgresql://localhost:5433/study-buddy
+spring.datasource.username=daebecodin
+spring.datasource.password=secret
+spring.datasource.driver-class-name=org.postgresql.Driver
+
+# Vector store configurations
+spring.ai.vectorstore.pgvector.initialize-schema=true
+spring.ai.vectorstore.pgvector.index-type=HNSW
+spring.ai.vectorstore.pgvector.distance-type=COSINE_DISTANCE
+spring.ai.vectorstore.pgvector.dimensions=1024
+spring.ai.vectorstore.pgvector.max-document-batch-size=1000
+spring.ai.vectorstore.pgvector.remove-existing-vector-store-table=false
+```
+
+**Key Configuration Details:**
+- **Port 5433**: Database runs on port 5433 to avoid conflicts with local PostgreSQL
+- **HNSW Index**: Uses Hierarchical Navigable Small World algorithm for efficient vector search
+- **Cosine Distance**: Measures similarity between document embeddings
+- **1024 Dimensions**: Matches the embedding model output dimensions
+- **Persistent Storage**: Data persists across container restarts via Docker volumes
+
 ### Installation Commands
+
 ```bash
 # Install HTTPie (macOS)
 brew install httpie
@@ -162,9 +230,36 @@ sudo apt install httpie
 # Install HTTPie (pip)
 pip install httpie
 
-# Start the application with Docker Compose
-docker-compose up -d
+# Start PostgreSQL with pgVector
+docker compose up -d
+
+# Verify database is running
+docker compose ps
+
+# Start the Spring Boot application
 ./gradlew bootRun
+
+# Alternative: Run with specific profile
+./gradlew bootRun --args='--spring.profiles.active=dev'
+```
+
+### Database Management Commands
+
+```bash
+# View database logs
+docker compose logs pgvector
+
+# Connect to database directly
+docker compose exec pgvector psql -U daebecodin -d study-buddy
+
+# Stop the database
+docker compose down
+
+# Stop and remove volumes (WARNING: This deletes all data)
+docker compose down -v
+
+# Restart the database
+docker compose restart pgvector
 ```
 
 ## API Endpoints with HTTPie Examples
