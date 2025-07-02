@@ -3,12 +3,12 @@ services:
     image: 'pgvector/pgvector:0.8.0-pg17'
     environment:
       - 'POSTGRES_DB=study-buddy'
-      - 'POSTGRES_PASSWORD=hyBUFsjUKoe8lIJQ'
+      - 'POSTGRES_PASSWORD=secret'
       - 'POSTGRES_USER=daebecodin'
     labels:
       - "org.springframework.boot.service-connection=postgres"
     ports:
-      - '5432'
+      - '5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/vector_extension.sql:/docker-entrypoint-initdb.d/0-vector_extension.sql
