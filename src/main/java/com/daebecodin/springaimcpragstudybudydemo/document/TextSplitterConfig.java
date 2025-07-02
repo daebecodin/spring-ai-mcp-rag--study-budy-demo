@@ -5,6 +5,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * Configuration for the chunk processing of the documents
+ * Convert to Application Proprties maybe
+ */
 @Configuration
 public class TextSplitterConfig {
 

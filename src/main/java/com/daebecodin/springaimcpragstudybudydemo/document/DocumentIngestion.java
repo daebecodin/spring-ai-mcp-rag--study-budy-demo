@@ -57,6 +57,12 @@ public class DocumentIngestion {
         this.processedDocumentRepository = processedDocumentRepository;
     }
 
+    /**
+     * Initialization method to process documents before startup.
+     * We call getDocumentsToProcess to discover new documents; if none, then we move one
+     * If there are new documents, the document name is extracted, converted to a url and then read by a document reader.
+     * @throws IOException Input/Output Problems
+     */
     @PostConstruct
     @Transactional
     void init() throws IOException {
@@ -73,8 +79,8 @@ public class DocumentIngestion {
             
             logger.info("Found {} new documents to process", documentsToProcess.size());
             
-            for (Path documentPath : documentsToProcess) {
-                processDocument(documentPath);
+            for (Path documentPath : documentsToProcess) { // iterate though documents
+                processDocument(documentPath); // process document
             }
             
             logger.info("Document ingestion process completed");
@@ -84,7 +90,14 @@ public class DocumentIngestion {
             throw e;
         }
     }
-    
+
+    /**
+     * This method checks the directory for new files by cross-referencing the
+     * current file's names with names in the database.
+     * If it's a new file then we add it to a new List of documents
+     * @return New list of documents to be processed
+     * @throws IOException Input/Output Problems
+     */
     private List<Path> getDocumentsToProcess() throws IOException {
         List<Path> newDocuments = new ArrayList<>();
         
@@ -117,7 +130,12 @@ public class DocumentIngestion {
         
         return newDocuments;
     }
-    
+
+    /**
+     * Ensures a processed document is of a compatible file type
+     * @param filename This is the name of the file to be processed
+     * @return compares the file name and the temp file; return the result
+     */
     private boolean matchesPattern(String filename) {
         // Simple pattern matching for common document types
         String lowerFilename = filename.toLowerCase();
@@ -127,7 +145,16 @@ public class DocumentIngestion {
                lowerFilename.endsWith(".json") ||
                lowerFilename.endsWith(".xml");
     }
-    
+
+    /**
+     * This method accepts a Path representation and extracts its name to a string
+     * That String is converted into a url for the document
+     * We run a check for the document file type; Depending on the type, we will use a different
+     * DocumentReader. The document is then split into manageable chunks and appended with its metadata
+     * Once the document is in chunks, we add them to the vector store to be embedded
+     *
+     * @param documentPath This is the file path of the document to be processed
+     */
     protected void processDocument(Path documentPath) {
         String filename = documentPath.getFileName().toString();
         logger.info("Processing document: {}", filename);
@@ -150,29 +177,30 @@ public class DocumentIngestion {
             List<Document> splitDocuments = textSplitter.apply(documents);
             logger.info("Split into {} chunks", splitDocuments.size());
             
-            // Add metadata to track source document
+            // Add metadata to track a source document
             splitDocuments.forEach(doc -> 
                 doc.getMetadata().put("source_filename", filename)
             );
             
-            // Add split documents to vector store
+            // Add split documents to the vector store
             try {
                 vectorStore.add(splitDocuments);
                 logger.info("Successfully added {} chunks to vector store", splitDocuments.size());
             } catch (Exception vectorStoreException) {
                 logger.error("Error adding documents to vector store for {}: {}", filename, vectorStoreException.getMessage(), vectorStoreException);
-                // Don't return here - still save to database to track the attempt
+                // Don't return here - still save it to a database to track the attempt
             }
             
-            // Record that this document has been processed (separate transaction)
+            // logs that this document has been processed (separate transaction)
             saveProcessedDocument(filename, documentPath, splitDocuments.size());
             
             logger.info("Successfully processed {} with {} chunks", filename, splitDocuments.size());
             
         } catch (Exception e) {
             logger.error("Error processing document {}: {}", filename, e.getMessage(), e);
-            // Still try to save to database to avoid reprocessing
+            // Still try to save it to a database to avoid reprocessing
             try {
+                // logs that this document has been processed (separate transaction)
                 saveProcessedDocument(filename, documentPath, 0);
                 logger.info("Saved failed processing attempt for {} to avoid reprocessing", filename);
             } catch (Exception saveException) {
@@ -180,11 +208,17 @@ public class DocumentIngestion {
             }
         }
     }
-    
+
+    /**
+     * Logs a successful document injection
+     * @param filename Ingested file name
+     * @param documentPath Ingested file path
+     * @param chunkCount Chunks created
+     */
     @Transactional
     protected void saveProcessedDocument(String filename, Path documentPath, int chunkCount) {
         try {
-            long fileSize = Files.size(documentPath);
+            long fileSize = Files.size(documentPath); // size of the document
             ProcessedDocument processedDoc = new ProcessedDocument(filename, fileSize, chunkCount);
             processedDocumentRepository.save(processedDoc);
             logger.info("Saved processing record for {} with {} chunks", filename, chunkCount);
@@ -201,7 +235,12 @@ public class DocumentIngestion {
             throw e; // Re-throw to ensure transaction rollback if needed
         }
     }
-    
+
+    /**
+     * Helper to process a PDF Document
+     * @param document The document to be processed
+     * @return The processed document
+     */
     private List<Document> processPdfDocument(Resource document) {
         try {
             return readParagraph(document);
@@ -211,6 +250,10 @@ public class DocumentIngestion {
         }
     }
 
+    /**
+     * Process a document in my project files
+     * @return The processed document
+     */
     public List<Document> linkedBagImplementations() {
        try {
            return readParagraph(stackImplementations);
@@ -261,16 +304,21 @@ public class DocumentIngestion {
     }
 
     /**
-     * Extract text from uploaded document
+     * This method extracts text from any given document using Tika
+     * @param file The document be extracted
+     * @return text extracted from document
+     * @throws IOException Input/Output Problems
+     * @throws TikaException TikaSpecific Problems
      */
     public String extractTextFromDocument(MultipartFile file) throws IOException, TikaException {
-        Tika tika = new Tika();
-        String text = tika.parseToString(file.getInputStream());
-        return text;
+        Tika tika = new Tika(); // Tika instance
+        return  tika.parseToString(file.getInputStream()); // tika parses the inputted file's input stream
     }
-    
+
     /**
-     * Method to manually trigger processing of a specific document
+     *
+     * @param filename the new document to be processed
+     * @throws IOException Input/Output Problems
      */
     public void processNewDocument(String filename) throws IOException {
         Path documentPath = Paths.get(documentDirectory.getURI()).resolve(filename);
@@ -282,15 +330,16 @@ public class DocumentIngestion {
             logger.warn("Document {} not found", filename);
         }
     }
-    
+
     /**
-     * Method to remove a document from tracking and vector store
+     * This method removes a document from the database
+     * @param filename The documents file path
      */
     @Transactional
     public void removeDocument(String filename) {
         if (processedDocumentRepository.existsByFilename(filename)) {
             // Note: Spring AI VectorStore doesn't have a direct way to delete by metadata
-            // You might need to implement custom deletion logic based on your vector store
+            // We may need to implement custom deletion logic based on your vector store
             processedDocumentRepository.deleteByFilename(filename);
             logger.info("Removed document {} from tracking", filename);
         } else {
